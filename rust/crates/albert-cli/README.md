@@ -1,0 +1,47 @@
+# albert-cli
+
+The `albert-cli` binary — part of the [Ternary Intelligence Stack](https://github.com/eriirfos-eng/ternary-intelligence-stack).
+
+[![Crates.io](https://img.shields.io/crates/v/albert-cli)](https://crates.io/crates/albert-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/eriirfos-eng/ternary-intelligence-stack/blob/main/LICENSE)
+
+## Install
+
+```bash
+# One line — installs Rust (if needed) + albert-cli, ready immediately
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source "$HOME/.cargo/env" && cargo install albert-cli
+```
+> **Note:** Do not use `sudo apt install cargo` — Ubuntu's packaged version is too old (1.75). The line above installs the current toolchain via rustup.
+
+Then run:
+
+```bash
+albert-cli
+```
+
+## What Albert does
+
+Albert is a sovereign AI development CLI that runs in your terminal. It connects to any LLM provider and gives you a full agentic coding environment without any cloud dependency:
+
+| Feature | Details |
+|---------|---------|
+| Multi-provider | Claude, GPT-4o, Gemini, Grok, Ollama, Bedrock, Azure |
+| Slash commands | `/plan`, `/tdd`, `/loop`, `/code-review`, `/build-fix`, `/bughunter`, `/refactor`, `/commit` |
+| Autonomous features | `/cron` (scheduled tasks), `/skill` (custom automations), `/teach-skill` (skill definitions) |
+| Memory & vault | `/remember`, `/recall`, `/vault` — persistent cross-session memory |
+| Reference docs | `/soul`, `/patterns`, `/security`, `/best-practices` — embedded production knowledge |
+| Tool execution | `read_file`, `write_file`, `edit_file`, `bash`, `glob`, `grep`, `web_fetch` |
+| MCP support | stdio and network transport for any MCP server |
+| Permission layer | Deny-first AST interception blocks dangerous shell patterns before OS |
+| Session memory | Sliding-window context compaction keeps long sessions coherent |
+
+## Part of the Albert ecosystem
+
+| Crate | Role |
+|-------|------|
+| [`albert-runtime`](https://crates.io/crates/albert-runtime) | Session, MCP, auth, bash |
+| [`albert-api`](https://crates.io/crates/albert-api) | Multi-provider LLM client |
+| [`albert-commands`](https://crates.io/crates/albert-commands) | Slash command library |
+| [`albert-tools`](https://crates.io/crates/albert-tools) | Tool execution layer |
+| [`albert-compat`](https://crates.io/crates/albert-compat) | Manifest extraction harness |
+| `albert-cli` | **This crate** — binary (`albert-cli`) |

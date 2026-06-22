@@ -1,0 +1,28 @@
+[package]
+name = "albert-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Conversation runtime for Albert CLI — session management, MCP, OAuth, bash execution, tool use and compaction"
+readme = "README.md"
+keywords = ["ai", "agent", "cli", "mcp", "llm"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+sha2 = "0.10"
+glob = "0.3"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "time"] }
+walkdir = "2"
+
+# ternlang feature: integrates with ternlang-core once it is published on crates.io
+# ternlang-core = { version = "1", optional = true }
+# [features]
+# ternlang = ["dep:ternlang-core"]
+
+[lints]
+workspace = true

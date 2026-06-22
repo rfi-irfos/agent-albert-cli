@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/*"]
+exclude = ["crates/rtk-integration"]
+resolver = "2"
+
+[workspace.package]
+version = "1.5.0"
+edition = "2024"
+license = "LGPL-2.1-or-later"
+repository = "https://github.com/eriirfos-eng/ternary-intelligence-stack"
+homepage = "https://ternlang.com"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_panics_doc = "allow"
+missing_errors_doc = "allow"

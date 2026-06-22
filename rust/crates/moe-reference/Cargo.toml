@@ -1,0 +1,9 @@
+[package]
+name = "moe-reference"
+version = "1.5.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+description = "Embedded reference documentation for Albert CLI — production patterns, security, and best practices"
+
+[dependencies]
