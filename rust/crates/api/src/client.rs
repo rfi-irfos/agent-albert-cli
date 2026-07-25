@@ -223,6 +223,17 @@ impl TernlangClient {
             _ => serde_json::to_value(request).map_err(ApiError::from)?,
         };
 
+        if std::env::var("ALBERT_DEBUG_REQ").is_ok() {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/albert_req.log")
+            {
+                let _ = writeln!(f, "{}", serde_json::to_string(&body).unwrap_or_default());
+            }
+        }
+
         let mut request_builder = self
             .http
             .post(&request_url)

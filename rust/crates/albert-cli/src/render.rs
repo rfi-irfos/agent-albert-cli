@@ -23,14 +23,16 @@ pub struct ColorTheme {
 impl Default for ColorTheme {
     fn default() -> Self {
         Self {
-            heading: Color::Cyan,
-            emphasis: Color::Magenta,
-            strong: Color::Yellow,
-            inline_code: Color::Green,
-            link: Color::Blue,
+            // Light-theme defaults: the bright variants (Cyan/Yellow/Green) are
+            // unreadable on a white terminal, so use their dark counterparts.
+            heading: Color::DarkBlue,
+            emphasis: Color::DarkMagenta,
+            strong: Color::DarkRed,
+            inline_code: Color::DarkGreen,
+            link: Color::DarkBlue,
             quote: Color::DarkGrey,
             table_border: Color::DarkCyan,
-            code_block_border: Color::DarkGrey,
+            code_block_border: Color::Grey,
         }
     }
 }
@@ -148,7 +150,7 @@ impl Default for TerminalRenderer {
         let syntax_set = SyntaxSet::load_defaults_newlines();
         let syntax_theme = ThemeSet::load_defaults()
             .themes
-            .remove("base16-ocean.dark")
+            .remove("InspiredGitHub")
             .unwrap_or_default();
         Self {
             syntax_set,

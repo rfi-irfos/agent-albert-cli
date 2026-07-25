@@ -247,7 +247,7 @@ impl ConfigLoader {
             sandbox: parse_optional_sandbox_config(&merged_value)?,
             providers: parse_optional_providers(&merged_value)?,
             default_provider: parse_optional_default_provider(&merged_value),
-            reasoning_effort: None,
+            reasoning_effort: parse_optional_reasoning_effort(&merged_value),
         };
 
         Ok(RuntimeConfig {
@@ -482,6 +482,28 @@ fn parse_optional_model(root: &JsonValue) -> Option<String> {
         .and_then(|object| object.get("model"))
         .and_then(JsonValue::as_str)
         .map(ToOwned::to_owned)
+}
+
+/// An explicit `reasoningEffort` wins; otherwise fall back to the
+/// `alwaysThinkingEnabled` toggle that onboarding writes. Reasoning models
+/// (the Nemotron family in particular) think on every turn unless the request
+/// carries an explicit off switch, so `false` has to become `"off"` rather than
+/// simply being left unset.
+fn parse_optional_reasoning_effort(root: &JsonValue) -> Option<String> {
+    let object = root.as_object()?;
+
+    if let Some(effort) = object.get("reasoningEffort").and_then(JsonValue::as_str) {
+        return Some(effort.to_owned());
+    }
+
+    match object
+        .get("alwaysThinkingEnabled")
+        .and_then(JsonValue::as_bool)
+    {
+        Some(true) => Some("medium".to_owned()),
+        Some(false) => Some("off".to_owned()),
+        None => None,
+    }
 }
 
 fn parse_optional_hooks_config(root: &JsonValue) -> Result<RuntimeHookConfig, ConfigError> {

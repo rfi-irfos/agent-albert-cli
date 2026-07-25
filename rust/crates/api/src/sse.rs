@@ -1,10 +1,23 @@
 use crate::error::ApiError;
-use crate::types::StreamEvent;
+use crate::types::{
+    ContentBlockStartEvent, ContentBlockStopEvent, MessageStopEvent, OutputContentBlock, StreamEvent,
+};
+
+/// A tool call under construction. OpenAI-compatible streams deliver the name
+/// and id once, then dribble the JSON arguments across many chunks, so a call
+/// can only be emitted after the stream closes.
+#[derive(Debug, Default, Clone)]
+struct PartialToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
 
 #[derive(Debug)]
 pub struct SseParser {
     buffer: Vec<u8>,
     provider_is_openai: bool,
+    tool_calls: Vec<PartialToolCall>,
 }
 
 impl SseParser {
@@ -13,6 +26,7 @@ impl SseParser {
         Self {
             buffer: Vec::new(),
             provider_is_openai,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -21,9 +35,7 @@ impl SseParser {
         let mut events = Vec::new();
 
         while let Some(frame) = self.next_frame() {
-            if let Some(event) = parse_frame(&frame, self.provider_is_openai)? {
-                events.push(event);
-            }
+            events.extend(self.handle_frame(&frame)?);
         }
 
         Ok(events)
@@ -35,10 +47,111 @@ impl SseParser {
         }
 
         let trailing = std::mem::take(&mut self.buffer);
-        match parse_frame(&String::from_utf8_lossy(&trailing), self.provider_is_openai)? {
-            Some(event) => Ok(vec![event]),
-            None => Ok(Vec::new()),
+        self.handle_frame(&String::from_utf8_lossy(&trailing))
+    }
+
+    /// An Anthropic frame maps to at most one event, but an OpenAI-compatible
+    /// one is stateful: tool call fragments accumulate until `[DONE]` closes the
+    /// stream, at which point the completed calls plus the terminating
+    /// `message_stop` are emitted together.
+    fn handle_frame(&mut self, frame: &str) -> Result<Vec<StreamEvent>, ApiError> {
+        if !self.provider_is_openai {
+            return Ok(parse_frame(frame, false)?.into_iter().collect());
         }
+
+        let Some(payload) = frame_payload(frame) else {
+            return Ok(Vec::new());
+        };
+
+        // OpenAI-compatible streams carry no `message_stop` event — they end with
+        // `[DONE]`, which arrives exactly once and always last.
+        if payload == "[DONE]" {
+            return Ok(self.flush_tool_calls());
+        }
+
+        let value = serde_json::from_str::<serde_json::Value>(&payload).map_err(ApiError::from)?;
+        self.accumulate_tool_calls(&value);
+
+        Ok(crate::client::translate_openai_chunk_to_event(value)
+            .into_iter()
+            .collect())
+    }
+
+    fn accumulate_tool_calls(&mut self, chunk: &serde_json::Value) {
+        let Some(calls) = chunk
+            .get("choices")
+            .and_then(|choices| choices.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("delta"))
+            .and_then(|delta| delta.get("tool_calls"))
+            .and_then(|calls| calls.as_array())
+        else {
+            return;
+        };
+
+        for call in calls {
+            let index = usize::try_from(
+                call.get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            )
+            .unwrap_or(0);
+
+            if self.tool_calls.len() <= index {
+                self.tool_calls.resize(index + 1, PartialToolCall::default());
+            }
+            let slot = &mut self.tool_calls[index];
+
+            if let Some(id) = call.get("id").and_then(serde_json::Value::as_str) {
+                if !id.is_empty() {
+                    slot.id = id.to_owned();
+                }
+            }
+            if let Some(function) = call.get("function") {
+                if let Some(name) = function.get("name").and_then(serde_json::Value::as_str) {
+                    if !name.is_empty() {
+                        slot.name = name.to_owned();
+                    }
+                }
+                if let Some(args) = function
+                    .get("arguments")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    slot.arguments.push_str(args);
+                }
+            }
+        }
+    }
+
+    fn flush_tool_calls(&mut self) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+
+        for (position, call) in std::mem::take(&mut self.tool_calls)
+            .into_iter()
+            .filter(|call| !call.name.is_empty())
+            .enumerate()
+        {
+            // A model that emits no arguments still produces a valid call with an
+            // empty object, so an unparseable fragment must not sink the turn.
+            let input = serde_json::from_str(&call.arguments)
+                .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
+
+            let index = u32::try_from(position).unwrap_or(0);
+            events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+                index,
+                content_block: OutputContentBlock::ToolUse {
+                    id: call.id,
+                    name: call.name,
+                    input,
+                },
+            }));
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
+        }
+
+        events.push(StreamEvent::MessageStop(MessageStopEvent {}));
+        events
     }
 
     fn next_frame(&mut self) -> Option<String> {
@@ -64,10 +177,12 @@ impl SseParser {
     }
 }
 
-pub fn parse_frame(frame: &str, is_openai: bool) -> Result<Option<StreamEvent>, ApiError> {
+/// Collapses an SSE frame down to its `data:` payload, discarding comments,
+/// pings and heartbeat frames that carry no data.
+fn frame_payload(frame: &str) -> Option<String> {
     let trimmed = frame.trim();
     if trimmed.is_empty() {
-        return Ok(None);
+        return None;
     }
 
     let mut data_lines = Vec::new();
@@ -86,15 +201,18 @@ pub fn parse_frame(frame: &str, is_openai: bool) -> Result<Option<StreamEvent>, 
         }
     }
 
-    if matches!(event_name, Some("ping")) {
-        return Ok(None);
+    if matches!(event_name, Some("ping")) || data_lines.is_empty() {
+        return None;
     }
 
-    if data_lines.is_empty() {
-        return Ok(None);
-    }
+    Some(data_lines.join("\n"))
+}
 
-    let payload = data_lines.join("\n");
+pub fn parse_frame(frame: &str, is_openai: bool) -> Result<Option<StreamEvent>, ApiError> {
+    let Some(payload) = frame_payload(frame) else {
+        return Ok(None);
+    };
+
     if payload == "[DONE]" {
         return Ok(None);
     }

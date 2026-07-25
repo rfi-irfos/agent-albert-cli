@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["crates/rtk-integration"]
+exclude = ["crates/rtk-integration", "crates/.claw"]
 resolver = "2"
 
 [workspace.package]

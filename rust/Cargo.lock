@@ -1960,16 +1960,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "safetensors"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44560c11236a6130a46ce36c836a62936dc81ebf8c36a37947423571be0e55b6"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2250,6 +2240,8 @@ dependencies = [
 [[package]]
 name = "ternlang-core"
 version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baf2efc39e829d533d5e0dbc90943fd04d1769d9368873b29b50b48eaac4c7e0"
 dependencies = [
  "ariadne",
  "logos",
@@ -2259,12 +2251,13 @@ dependencies = [
 [[package]]
 name = "ternlang-ml"
 version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6a2b1135df97c6dd3609414f3c1159963943933e4c7fb78a66f2bdaf017c171"
 dependencies = [
  "anyhow",
  "bincode",
  "rand 0.8.6",
  "rayon",
- "safetensors",
  "serde",
  "serde_json",
  "ternlang-core",
@@ -2273,6 +2266,8 @@ dependencies = [
 [[package]]
 name = "ternlang-ruvector"
 version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550802decc551644b4d655d81350bb88ba60c6ab8e85dfe35324faa3c5450298"
 dependencies = [
  "anyhow",
  "rayon",

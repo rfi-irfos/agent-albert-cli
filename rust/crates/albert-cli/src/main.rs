@@ -41,7 +41,7 @@ use tools::{execute_tool, mvp_tool_specs, ToolSpec};
 use runtime::{McpServerConfig, McpServerManager, McpStdioServerConfig, ScopedMcpServerConfig};
 use std::sync::{Arc, Mutex};
 
-const DEFAULT_MODEL: &str = "nvidia/nemotron-3-ultra-550b-a55b";
+const DEFAULT_MODEL: &str = "nvidia/nemotron-3-super-120b-a12b";
 fn max_tokens_for_model(model: &str) -> u32 {
     if model.contains("haiku") {
         16_000
@@ -4627,7 +4627,7 @@ fn build_runtime(
         client,
         model: model.clone(),
         max_tokens: max_tokens_for_model(&model),
-        reasoning_effort: None,
+        reasoning_effort: config.reasoning_effort().map(ToOwned::to_owned),
         tools: if enable_tools {
             filter_tool_specs(allowed_tools.as_ref())
         } else {

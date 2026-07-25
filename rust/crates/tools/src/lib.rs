@@ -4828,6 +4828,166 @@ fn vault_ruvector_path() -> Result<std::path::PathBuf, String> {
     Ok(std::path::PathBuf::from(home).join(".albert").join("vault.ruvector"))
 }
 
+/// Raw f32 embeddings, kept alongside the vault. RuVectorDB stores its vectors
+/// ternary-quantized and cannot reproduce the originals, so the index has to be
+/// rebuilt from these whenever a memory is added.
+fn vault_embeddings_path() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    Ok(std::path::PathBuf::from(home)
+        .join(".albert")
+        .join("vault.embeddings.jsonl"))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VaultEmbedding {
+    id: String,
+    content: String,
+    embedding: Vec<f32>,
+}
+
+const VAULT_EMBED_MODEL: &str = "nvidia/llama-nemotron-embed-1b-v2";
+
+/// Strip the stored `<ISO timestamp>: ` prefix so only the memory itself gets
+/// embedded. Every entry carries a near-identical timestamp, and leaving it in
+/// pulls all the vectors toward each other — enough to sink the ranking.
+fn vault_semantic_text(content: &str) -> &str {
+    static PREFIX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = PREFIX.get_or_init(|| {
+        regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T[\d:.]+\+\d{4}:\s*").expect("valid regex")
+    });
+    match re.find(content) {
+        Some(m) => &content[m.end()..],
+        None => content,
+    }
+}
+
+/// Embed a single string via the provider's OpenAI-compatible `/v1/embeddings`.
+///
+/// `input_type` must be `"passage"` when storing and `"query"` when searching:
+/// NVIDIA's retrieval models are asymmetric and rank poorly if both sides are
+/// embedded the same way.
+fn vault_embed(text: &str, input_type: &str) -> Result<Vec<f32>, String> {
+    let provider = runtime::load_provider_config("nvidia")
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no nvidia provider configured".to_string())?;
+    let api_key = provider
+        .api_key
+        .ok_or_else(|| "no nvidia api key stored".to_string())?;
+    let base_url = provider
+        .base_url
+        .unwrap_or_else(|| "https://integrate.api.nvidia.com".to_string());
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .post(format!(
+            "{}/v1/embeddings",
+            base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": VAULT_EMBED_MODEL,
+            "input": [text],
+            "input_type": input_type,
+        }))
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    if !response.status().is_success() {
+        return Err(format!("embeddings endpoint returned {}", response.status()));
+    }
+
+    let body: Value = response.json().map_err(|e| e.to_string())?;
+    let vector = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .and_then(|d| d.first())
+        .and_then(|e| e.get("embedding"))
+        .and_then(|e| e.as_array())
+        .ok_or_else(|| "embeddings response had no vector".to_string())?;
+
+    vector
+        .iter()
+        .map(|v| {
+            v.as_f64()
+                .map(|f| f as f32)
+                .ok_or_else(|| "embedding held a non-numeric value".to_string())
+        })
+        .collect()
+}
+
+/// Bring the semantic index in sync with the vault, then rebuild it.
+///
+/// Every vault entry lacking a vector gets embedded, so memories written before
+/// the index existed (or while the network was down) are picked up on the next
+/// write rather than staying invisible to semantic search forever. Rebuilding is
+/// O(n) per write, which is nothing at personal-vault size.
+fn vault_sync_index() -> Result<(), String> {
+    use std::io::Write as _;
+
+    let vault = std::fs::read_to_string(vault_path()?).map_err(|e| e.to_string())?;
+    let entries: Vec<VaultEntry> = vault
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    if entries.is_empty() {
+        return Err("vault is empty".to_string());
+    }
+
+    let embeddings_path = vault_embeddings_path()?;
+    let stored = std::fs::read_to_string(&embeddings_path).unwrap_or_default();
+    let mut records: Vec<VaultEmbedding> = stored
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let indexed: BTreeSet<String> = records.iter().map(|r| r.id.clone()).collect();
+
+    let missing: Vec<&VaultEntry> = entries
+        .iter()
+        .filter(|entry| !indexed.contains(&entry.id))
+        .collect();
+
+    if !missing.is_empty() {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&embeddings_path)
+            .map_err(|e| e.to_string())?;
+
+        for entry in missing {
+            let embedding = vault_embed(vault_semantic_text(&entry.content), "passage")?;
+            let record = VaultEmbedding {
+                id: entry.id.clone(),
+                content: entry.content.clone(),
+                embedding,
+            };
+            writeln!(
+                file,
+                "{}",
+                serde_json::to_string(&record).map_err(|e| e.to_string())?
+            )
+            .map_err(|e| e.to_string())?;
+            records.push(record);
+        }
+    }
+
+    if records.is_empty() {
+        return Err("no embeddings to index".to_string());
+    }
+
+    let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.embedding.clone()).collect();
+    let metadata: Vec<String> = records.iter().map(|r| r.content.clone()).collect();
+
+    let db = RuVectorDB::from_f32(&vectors, metadata).map_err(|e| e.to_string())?;
+    let encoded = serde_json::to_vec(&db).map_err(|e| e.to_string())?;
+    std::fs::write(vault_ruvector_path()?, encoded).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 fn vault_extract_tags(text: &str) -> Vec<String> {
     let re = regex::Regex::new(r"#\w+").expect("valid regex");
     let tags: Vec<String> = re.find_iter(text).map(|m| m.as_str().to_string()).collect();
@@ -4867,10 +5027,20 @@ fn run_vault_write(input: VaultWriteInput) -> Result<String, String> {
     writeln!(file, "{}", serde_json::to_string(&entry).map_err(|e| e.to_string())?)
         .map_err(|e| format!("-1 Entropy. Failed to write to vault: {e}"))?;
     
-    // Semantic indexing would happen here in a full implementation.
-    // For now, we've established the temporal cognition and RuVector structure.
-    
-    Ok(format!("+1 Resonance. Memory secured at T+{}. Tags: {}", unix_epoch_seconds, tags.join(", ")))
+    // The memory is already durable on disk at this point. Indexing needs the
+    // network, so a failure here degrades recall to keyword search rather than
+    // losing the memory — say so instead of reporting a clean save.
+    let indexed = match vault_sync_index() {
+        Ok(()) => " Semantic index updated.".to_string(),
+        Err(e) => format!(" (keyword-only — semantic indexing failed: {e})"),
+    };
+
+    Ok(format!(
+        "+1 Resonance. Memory secured at T+{}. Tags: {}.{}",
+        unix_epoch_seconds,
+        tags.join(", "),
+        indexed
+    ))
 }
 
 fn run_vault_read(input: VaultReadInput) -> Result<String, String> {
@@ -4893,23 +5063,50 @@ fn run_vault_read(input: VaultReadInput) -> Result<String, String> {
         }
     }
     
-    // Semantic Search via RuVector (if index exists)
+    // Semantic search via RuVector. This is what finds a memory whose wording
+    // shares nothing with the question, so it runs even when keywords already
+    // hit — but never at the cost of the keyword results, which are exact.
+    let mut semantic: Vec<String> = Vec::new();
     let rv_path = vault_ruvector_path()?;
     if rv_path.exists() {
-        if let Ok(db_bytes) = std::fs::read(&rv_path) {
-            if let Ok(_db) = serde_json::from_slice::<RuVectorDB>(&db_bytes) {
-                // In a real session, we'd generate a query embedding here.
-                // For this implementation, we report the semantic readiness.
-                results.insert(0, "--- Semantic Index Active (RuVector) ---".to_string());
+        if let (Ok(db_bytes), Ok(query_vector)) =
+            (std::fs::read(&rv_path), vault_embed(&input.query, "query"))
+        {
+            if let Ok(db) = serde_json::from_slice::<RuVectorDB>(&db_bytes) {
+                let hits = db.search(&query_vector, 5);
+                // Scores are unnormalised ternary dot products, so an absolute
+                // cutoff means nothing. Keep only hits that stand near the best
+                // one — a weak top hit is a miss, not a memory.
+                if let Some(best) = hits.first().map(|h| h.score) {
+                    for hit in hits.iter().filter(|h| h.score > 0.0 && h.score >= best * 0.4) {
+                        if content.lines().any(|line| {
+                            line.to_lowercase().contains(&query)
+                                && line.contains(hit.metadata.as_str())
+                        }) {
+                            continue; // already returned as an exact keyword hit
+                        }
+                        semantic.push(format!("[semantic {:.0}] {}", hit.score, hit.metadata));
+                    }
+                }
             }
         }
     }
 
-    if results.is_empty() {
-        Ok(format!("0 Static: No memories found matching '{}'.", input.query))
-    } else {
-        Ok(format!("Vault — {} match(es) for '{}':\n\n{}", results.len(), input.query, results.join("\n\n")))
+    if results.is_empty() && semantic.is_empty() {
+        return Ok(format!(
+            "0 Static: No memories found matching '{}'.",
+            input.query
+        ));
     }
+
+    let total = results.len() + semantic.len();
+    results.extend(semantic);
+    Ok(format!(
+        "Vault — {} match(es) for '{}':\n\n{}",
+        total,
+        input.query,
+        results.join("\n\n")
+    ))
 }
 
 fn run_vault_write_wrapped(input: VaultWriteInput) -> Result<ToolResult, String> {

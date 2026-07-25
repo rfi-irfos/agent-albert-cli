@@ -27,29 +27,48 @@ use commands::slash_command_specs;
 use runtime::AssistantEvent;
 use api;
 
-// ── Colors ────────────────────────────────────────────────────────────────────
+// ── Colors — light theme ──────────────────────────────────────────────────────
+// Every background is set explicitly rather than left as Color::Reset, so the
+// canvas stays white even if the surrounding terminal is configured dark.
+// Accents are darkened: the previous values were tuned to glow on a dark navy
+// canvas and wash out to near-invisible on white.
 
-const BG: Color = Color::Rgb(13, 17, 33);
-const FG: Color = Color::Rgb(220, 220, 220);
-const DIM: Color = Color::Rgb(80, 80, 80);
-const GREY: Color = Color::Rgb(145, 145, 145);
-const GREEN: Color = Color::Rgb(0, 220, 120);
-const CYAN: Color = Color::Rgb(0, 200, 255);
-const ORANGE: Color = Color::Rgb(255, 140, 50);   // working `*` indicator
-const USER_BOX_BG: Color = Color::Reset;
-const STATUS_BG: Color = Color::Reset;
-const BRANCH_BG: Color = Color::Reset;  // git branch pill background
-const POPUP_BG: Color = Color::Rgb(20, 26, 48);
-const POPUP_MATCH: Color = Color::Rgb(0, 180, 100);
-const POPUP_SEL_BG: Color = Color::Rgb(42, 42, 42);
-const CODE_FG: Color = Color::Rgb(100, 210, 255);    // inline code / code blocks
-const CODE_BG: Color = Color::Reset;       // code block row background
-const CODE_BAR: Color = Color::Rgb(0, 100, 160);     // code block left border bar
-const CHAT_BORDER: Color = Color::Rgb(0, 65, 75);    // chat area frame
-const INPUT_BORDER: Color = Color::Rgb(0, 175, 160); // input box turquoise frame
-const ERROR_FG: Color = Color::Rgb(230, 80, 50);     // error lines in tool output
+const BG: Color = Color::Rgb(255, 255, 255);
+const FG: Color = Color::Rgb(28, 30, 36);
+const DIM: Color = Color::Rgb(158, 163, 171);
+const GREY: Color = Color::Rgb(100, 106, 115);
+const GREEN: Color = Color::Rgb(0, 130, 75);
+const CYAN: Color = Color::Rgb(0, 105, 150);
+const ORANGE: Color = Color::Rgb(188, 92, 0);     // working `*` indicator
+const USER_BOX_BG: Color = Color::Rgb(244, 245, 248);
+const STATUS_BG: Color = Color::Rgb(255, 255, 255);
+const BRANCH_BG: Color = Color::Rgb(240, 241, 245);  // git branch pill background
+const POPUP_BG: Color = Color::Rgb(242, 243, 247);
+const POPUP_MATCH: Color = Color::Rgb(0, 120, 70);
+const POPUP_SEL_BG: Color = Color::Rgb(214, 222, 234);
+const CODE_FG: Color = Color::Rgb(0, 92, 138);       // inline code / code blocks
+const CODE_BG: Color = Color::Rgb(245, 246, 249);    // code block row background
+const CODE_BAR: Color = Color::Rgb(120, 172, 208);   // code block left border bar
+const CHAT_BORDER: Color = Color::Rgb(198, 204, 212);// chat area frame
+const INPUT_BORDER: Color = Color::Rgb(0, 150, 136); // input box turquoise frame
+const ERROR_FG: Color = Color::Rgb(190, 40, 25);     // error lines in tool output
 const POPUP_WINDOW: usize = 16;                       // max items visible at once in popup
-const CATEGORY_FG: Color = Color::Rgb(60, 60, 60);   // greyed-out category headers in popup
+const CATEGORY_FG: Color = Color::Rgb(150, 155, 163);// greyed-out category headers in popup
+
+// Semantic colors for elements that previously hardcoded dark-canvas literals
+// at their use site.
+const RULE: Color = Color::Rgb(206, 212, 218);       // divider rules, spine glyphs
+const BRAND: Color = Color::Rgb(0, 130, 90);         // the "albert" speaker label
+const OK_FG: Color = Color::Rgb(0, 130, 80);         // success / summary text
+const RESULT_FG: Color = Color::Rgb(90, 98, 105);    // tool result lines
+const THINK_FG: Color = Color::Rgb(140, 146, 154);   // thinking / reasoning trace
+const ACCENT: Color = Color::Rgb(0, 140, 128);       // teal accents (attachments, voice)
+const DIALOG_BG: Color = Color::Rgb(248, 249, 251);  // modal dialog background
+const DIALOG_BORDER: Color = Color::Rgb(198, 204, 212);
+const HINT_FG: Color = Color::Rgb(130, 136, 144);    // help-screen hints
+const STATUS_FG: Color = Color::Rgb(148, 154, 162);  // status bar base text
+const MIC_ON: Color = Color::Rgb(214, 40, 40);       // recording indicator blink
+const MIC_OFF: Color = Color::Rgb(158, 28, 28);
 
 /// Returns a Style that "breathes" (interpolates brightness) over time.
 /// Used to unify the pulse effect across the status bar, tool calls, and tasks.
@@ -62,10 +81,12 @@ fn get_pulse_style(elapsed: f32, is_active: bool) -> Style {
     let t = (elapsed % period) / period;
     let intensity = ((t * std::f32::consts::PI).sin()).powf(2.0);
 
-    // LERP from Grey (80,80,80) to Turquoise (0,200,255)
-    let r = (80.0 + (0.0 - 80.0) * intensity) as u8;
-    let g = (80.0 + (200.0 - 80.0) * intensity) as u8;
-    let b = (80.0 + (255.0 - 80.0) * intensity) as u8;
+    // LERP from light grey (150,155,163) to deep teal (0,120,150). On a white
+    // canvas the pulse has to darken at its crest; the old version brightened
+    // toward (0,200,255) and simply faded into the background.
+    let r = (150.0 + (0.0 - 150.0) * intensity) as u8;
+    let g = (155.0 + (120.0 - 155.0) * intensity) as u8;
+    let b = (163.0 + (150.0 - 163.0) * intensity) as u8;
 
     Style::default()
         .fg(Color::Rgb(r, g, b))
@@ -100,15 +121,14 @@ fn get_shimmer_spans(text: &str, elapsed: f32) -> Vec<Span<'static>> {
             0.0
         };
 
-        // Base color (turquoise): (0, 200, 255)
-        // Shimmer adds brightness (white highlight effect)
-        let base_r = 0u8;
-        let base_g = 200u8;
-        let base_b = 255u8;
+        // Base color (deep teal): (0, 120, 150). The crest of the sweep darkens
+        // toward (0, 40, 70) — a white highlight would be invisible here.
+        let base_g = 120.0f32;
+        let base_b = 150.0f32;
 
-        let r = (base_r as f32 + (255.0 - base_r as f32) * brightness * 0.6) as u8;
-        let g = (base_g as f32 + (255.0 - base_g as f32) * brightness * 0.4) as u8;
-        let b = (base_b as f32 + (255.0 - base_b as f32) * brightness * 0.3) as u8;
+        let r = 0u8;
+        let g = (base_g - (base_g - 40.0) * brightness) as u8;
+        let b = (base_b - (base_b - 70.0) * brightness) as u8;
 
         let style = Style::default()
             .fg(Color::Rgb(r, g, b))
@@ -329,6 +349,10 @@ pub struct TuiState {
     pub typewriter_buffer: String,
     /// Track the index of the last active assistant text block for correct turn anchoring.
     pub current_assistant_block_index: Option<usize>,
+    /// The API stream has ended but the typewriter may still be draining. The turn
+    /// anchor can only be released once the buffer is empty, otherwise the tail of
+    /// the reply lands in a fresh block and the text visibly breaks mid-word.
+    pub turn_end_pending: bool,
     /// Ordered list of previously submitted messages (max 200).
     pub input_history: Vec<String>,
     /// Index into input_history while browsing (None = not browsing).
@@ -403,6 +427,7 @@ impl Default for TuiState {
             help_scroll: 0,
             typewriter_buffer: String::new(),
             current_assistant_block_index: None,
+            turn_end_pending: false,
             input_history: Vec::new(),
             history_idx: None,
             input_saved: String::new(),
@@ -445,9 +470,29 @@ impl TuiState {
     }
 
     pub fn push_exec(&mut self, block: ExecBlock) {
+        // A tool call, plan or system line genuinely interrupts the reply, and the
+        // typewriter always runs behind the network. Commit whatever is still
+        // buffered to the current text block before the interruption is drawn —
+        // otherwise the untyped tail resurfaces *after* the tool output, severed
+        // mid-word. WorkedFor is invisible and must not cut the animation short;
+        // UserMessage deliberately drops the tail, since that reply was interrupted.
+        let interrupts_text = !matches!(
+            &block,
+            ExecBlock::AgentText(..) | ExecBlock::WorkedFor(_) | ExecBlock::UserMessage(_)
+        );
+        if interrupts_text && !self.typewriter_buffer.is_empty() {
+            if let Some(idx) = self.current_assistant_block_index {
+                if let Some(ExecBlock::AgentText(text, _)) = self.exec_log.get_mut(idx) {
+                    let tail = std::mem::take(&mut self.typewriter_buffer);
+                    text.push_str(&tail);
+                }
+            }
+        }
+
         if matches!(&block, ExecBlock::UserMessage(_)) {
             self.seal_last_assistant_block();
             self.current_assistant_block_index = None;
+            self.turn_end_pending = false;
             self.typewriter_buffer.clear();
             self.thinking_typewriter_buffer.clear();
             self.current_thinking_block_index = None;
@@ -485,6 +530,11 @@ impl TuiState {
         // Track the index of AssistantResponse blocks for turn anchoring
         if matches!(self.exec_log.back(), Some(ExecBlock::AgentText(..))) {
             self.current_assistant_block_index = Some(self.exec_log.len() - 1);
+        } else if matches!(self.exec_log.back(), Some(ExecBlock::WorkedFor(_))) {
+            // WorkedFor is an invisible timing marker pushed the moment the API turn
+            // ends — which is long before the typewriter has finished drawing the
+            // reply. Breaking continuity here would strand the undrawn tail in a new
+            // block, and the reader sees the sentence snap mid-word.
         } else {
             // Any other block (ToolUse, Plan, etc.) breaks the continuity of the text block.
             self.current_assistant_block_index = None;
@@ -1354,8 +1404,8 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
     } else {
         "│ "
     };
-    let spine = Span::styled(spine_glyph, Style::default().fg(Color::Rgb(25, 45, 45)));
-    let seal = Span::styled("└─", Style::default().fg(Color::Rgb(25, 45, 45)));
+    let spine = Span::styled(spine_glyph, Style::default().fg(RULE));
+    let seal = Span::styled("└─", Style::default().fg(RULE));
 
     for (block_idx, block) in state.exec_log.iter().enumerate() {
         let is_last = is_last_in_turn_by_index(&state.exec_log, block_idx);
@@ -1377,8 +1427,8 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
             ExecBlock::ToolUse { name, args, active, xray } => {
                 if !in_assistant_turn {
                     lines.push(Line::from(vec![
-                        Span::styled("albert", Style::default().fg(Color::Rgb(0, 170, 120)).add_modifier(Modifier::BOLD)),
-                        Span::styled(" ─────────────────────", Style::default().fg(Color::Rgb(25, 45, 45))),
+                        Span::styled("albert", Style::default().fg(BRAND).add_modifier(Modifier::BOLD)),
+                        Span::styled(" ─────────────────────", Style::default().fg(RULE)),
                     ]));
                     in_assistant_turn = true;
                 }
@@ -1408,12 +1458,12 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                 // Header line
                 let dot_icon = if !*active && has_xray { " ✓ " } else { " ● " };
                 let dot_style_h = if !*active && has_xray {
-                    Style::default().fg(Color::Rgb(0, 200, 100)).add_modifier(Modifier::BOLD)
+                    Style::default().fg(OK_FG).add_modifier(Modifier::BOLD)
                 } else { dot_style };
 
                 let mut header_spans = vec![
                     spine.clone(),
-                    Span::styled(hook, Style::default().fg(Color::Rgb(25, 45, 45))),
+                    Span::styled(hook, Style::default().fg(RULE)),
                     Span::styled(dot_icon, dot_style_h),
                     Span::styled(format!("{verb} {name}"), Style::default().fg(name_col).add_modifier(Modifier::BOLD)),
                 ];
@@ -1426,7 +1476,7 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                         } else {
                             format!("  {}", xr.file)
                         };
-                        header_spans.push(Span::styled(summary, Style::default().fg(Color::Rgb(0, 180, 120))));
+                        header_spans.push(Span::styled(summary, Style::default().fg(OK_FG)));
                     }
                 } else {
                     if !args.is_empty() {
@@ -1440,12 +1490,12 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
 
                 // XRay diff lines (only when not collapsed / has xray)
                 if let Some(xr) = xray {
-                    const XRAY_BG_ADD: Color = Color::Rgb(0, 35, 15);
-                    const XRAY_BG_REM: Color = Color::Rgb(40, 8, 8);
-                    const XRAY_FG_ADD: Color = Color::Rgb(80, 230, 120);
-                    const XRAY_FG_REM: Color = Color::Rgb(230, 80, 80);
-                    const XRAY_FG_CTX: Color = Color::Rgb(70, 85, 85);
-                    const XRAY_FG_NUM: Color = Color::Rgb(55, 75, 75);
+                    const XRAY_BG_ADD: Color = Color::Rgb(230, 245, 234);
+                    const XRAY_BG_REM: Color = Color::Rgb(253, 235, 233);
+                    const XRAY_FG_ADD: Color = Color::Rgb(0, 110, 55);
+                    const XRAY_FG_REM: Color = Color::Rgb(175, 35, 30);
+                    const XRAY_FG_CTX: Color = Color::Rgb(110, 118, 126);
+                    const XRAY_FG_NUM: Color = Color::Rgb(155, 162, 170);
 
                     let usable_w = _width.saturating_sub(10).max(20) as usize;
 
@@ -1498,8 +1548,8 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                 if !in_assistant_turn {
                     lines.push(Line::default());
                     lines.push(Line::from(vec![
-                        Span::styled("albert", Style::default().fg(Color::Rgb(0, 170, 120)).add_modifier(Modifier::BOLD)),
-                        Span::styled(" ─────────────────────", Style::default().fg(Color::Rgb(25, 45, 45))),
+                        Span::styled("albert", Style::default().fg(BRAND).add_modifier(Modifier::BOLD)),
+                        Span::styled(" ─────────────────────", Style::default().fg(RULE)),
                     ]));
                     in_assistant_turn = true;
                 }
@@ -1521,7 +1571,7 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                     // Audit: Single spine at Col 0.
                     lines.push(Line::from(vec![
                         spine.clone(),
-                        Span::styled(hook, Style::default().fg(Color::Rgb(25, 45, 45))),
+                        Span::styled(hook, Style::default().fg(RULE)),
                         Span::styled(icon, style),
                         Span::styled(task.label.clone(), Style::default().fg(FG)),
                     ]));
@@ -1533,7 +1583,7 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                     // Collapsed view: show hidden line count + brief summary
                     lines.push(Line::from(vec![
                         spine.clone(),
-                        Span::styled("└─", Style::default().fg(Color::Rgb(25, 45, 45))),
+                        Span::styled("└─", Style::default().fg(RULE)),
                         Span::styled(" ", Style::default()),
                         Span::styled(format!("... first {} lines hidden (Ctrl+O to show) ...", out.len()),
                             Style::default().fg(DIM).add_modifier(Modifier::ITALIC)),
@@ -1544,7 +1594,7 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                         lines.push(Line::from(vec![
                             spine.clone(),
                             Span::styled("   ", Style::default()),
-                            Span::styled(result_line.clone(), Style::default().fg(Color::Rgb(110, 120, 120))),
+                            Span::styled(result_line.clone(), Style::default().fg(RESULT_FG)),
                         ]));
                     }
 
@@ -1565,11 +1615,11 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                         let connector = if i == 0 { "└─" } else { "  " };
                         let lower = line.to_ascii_lowercase();
                         let is_err = lower.contains("error") || lower.contains("not found") || lower.contains("failed:");
-                        let line_col = if is_err { ERROR_FG } else { Color::Rgb(110, 120, 120) };
+                        let line_col = if is_err { ERROR_FG } else { RESULT_FG };
 
                         lines.push(Line::from(vec![
                             spine.clone(), // Keep main spine
-                            Span::styled(connector, Style::default().fg(Color::Rgb(25, 45, 45))),
+                            Span::styled(connector, Style::default().fg(RULE)),
                             Span::styled(" ", Style::default()),
                             Span::styled(line.clone(), Style::default().fg(line_col)),
                         ]));
@@ -1596,8 +1646,8 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
             ExecBlock::AgentText(text, interrupted) => {
                 if !in_assistant_turn {
                     lines.push(Line::from(vec![
-                        Span::styled("albert", Style::default().fg(Color::Rgb(0, 170, 120)).add_modifier(Modifier::BOLD)),
-                        Span::styled(" ─────────────────────", Style::default().fg(Color::Rgb(25, 45, 45))),
+                        Span::styled("albert", Style::default().fg(BRAND).add_modifier(Modifier::BOLD)),
+                        Span::styled(" ─────────────────────", Style::default().fg(RULE)),
                     ]));
                     in_assistant_turn = true;
                 }
@@ -1616,13 +1666,13 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
             ExecBlock::Thinking(text) => {
                 in_assistant_turn = false;
                 let thinking_style = Style::default()
-                    .fg(Color::Rgb(90, 90, 90))
+                    .fg(THINK_FG)
                     .add_modifier(Modifier::ITALIC | Modifier::DIM);
                 let spine_style = Style::default()
-                    .fg(Color::Rgb(55, 55, 55))
+                    .fg(RULE)
                     .add_modifier(Modifier::DIM);
                 lines.push(Line::from(vec![
-                    Span::styled("  thinking", Style::default().fg(Color::Rgb(70, 70, 70)).add_modifier(Modifier::ITALIC | Modifier::DIM)),
+                    Span::styled("  thinking", Style::default().fg(Color::Rgb(150, 156, 164)).add_modifier(Modifier::ITALIC | Modifier::DIM)),
                 ]));
                 for line in text.lines() {
                     lines.push(Line::from(vec![
@@ -1654,12 +1704,12 @@ fn build_exec_lines(state: &TuiState, _width: u16) -> Vec<Line<'static>> {
                 if is_banner || is_treemap {
                     it_msg.next(); // skip marker
                     let logo_colors = [
-                        Color::Rgb(0, 255, 255), // Turquoise gradient
-                        Color::Rgb(0, 220, 255),
-                        Color::Rgb(0, 190, 255),
-                        Color::Rgb(0, 160, 255),
-                        Color::Rgb(0, 130, 255),
-                        Color::Rgb(0, 100, 255),
+                        Color::Rgb(0, 150, 150), // Teal → blue gradient, darkened for white
+                        Color::Rgb(0, 140, 170),
+                        Color::Rgb(0, 128, 185),
+                        Color::Rgb(0, 115, 195),
+                        Color::Rgb(0, 100, 200),
+                        Color::Rgb(0, 88, 200),
                     ];
                     
                     let banner_lines: Vec<String> = it_msg.map(|s| s.to_string()).collect();
@@ -1943,9 +1993,9 @@ fn render_help_overlay(f: &mut ratatui::Frame, area: Rect, scroll: u16) {
     };
     f.render_widget(Clear, overlay);
 
-    const SECTION: Color = Color::Rgb(0, 200, 120);
-    const CMD_C:   Color = Color::Rgb(0, 200, 255);
-    const HINT_C:  Color = Color::Rgb(120, 120, 120);
+    const SECTION: Color = Color::Rgb(0, 125, 75);
+    const CMD_C:   Color = Color::Rgb(0, 105, 150);
+    const HINT_C:  Color = HINT_FG;
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let h = |s: &'static str| Line::from(Span::styled(s, Style::default().fg(SECTION).add_modifier(Modifier::BOLD)));
@@ -2025,8 +2075,8 @@ fn render_help_overlay(f: &mut ratatui::Frame, area: Rect, scroll: u16) {
         .title(" Albert — Command Reference ")
         .title_style(Style::default().fg(GREEN).add_modifier(Modifier::BOLD))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
-        .style(Style::default().bg(Color::Rgb(8, 8, 8)));
+        .border_style(Style::default().fg(DIALOG_BORDER))
+        .style(Style::default().bg(DIALOG_BG));
 
     let para = Paragraph::new(Text::from(lines))
         .block(block)
@@ -2042,7 +2092,7 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
         Some(AuthFlowPhase::Key { .. })   => ORANGE,
         Some(AuthFlowPhase::Model { .. }) => GREEN,
         None => if state.image_path_overlay {
-            Color::Rgb(0, 180, 180)
+            ACCENT
         } else {
             INPUT_BORDER
         },
@@ -2130,13 +2180,13 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
     } else if state.image_path_overlay {
         if state.input.is_empty() {
             Paragraph::new(Line::from(vec![
-                Span::styled(" 📎 ", Style::default().fg(Color::Rgb(0, 200, 180)).add_modifier(Modifier::BOLD)),
-                Span::styled("Enter image path:", Style::default().fg(Color::Rgb(0, 200, 180))),
+                Span::styled(" 📎 ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+                Span::styled("Enter image path:", Style::default().fg(ACCENT)),
                 Span::styled("  (Esc to cancel)", Style::default().fg(DIM)),
             ]))
         } else {
             Paragraph::new(Line::from(vec![
-                Span::styled(" 📎 ", Style::default().fg(Color::Rgb(0, 200, 180)).add_modifier(Modifier::BOLD)),
+                Span::styled(" 📎 ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
                 Span::styled(state.input.clone(), Style::default().fg(FG)),
             ]))
         }
@@ -2149,7 +2199,7 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
         Paragraph::new(Line::from(vec![
             Span::styled(" ≻ ", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
             Span::styled("Type your message or @path/to/file", Style::default().fg(DIM)),
-            Span::styled(img_badge, Style::default().fg(Color::Rgb(0, 200, 180))),
+            Span::styled(img_badge, Style::default().fg(ACCENT)),
         ]))
     } else {
         let (prompt_txt, prompt_col) = if state.history_idx.is_some() {
@@ -2171,7 +2221,7 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
             if !state.pending_images.is_empty() {
                 spans.push(Span::styled(
                     format!("  [📎 {}]", state.pending_images.len()),
-                    Style::default().fg(Color::Rgb(0, 200, 180)),
+                    Style::default().fg(ACCENT),
                 ));
             }
             lines.push(Line::from(spans));
@@ -2203,7 +2253,11 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
         } else {
             let w = text_area.width as usize;
             let p = PREFIX as usize;
-            let (visual_row, visual_col) = if state.cursor < w.saturating_sub(p) {
+            let (visual_row, visual_col) = if w == 0 {
+                // A zero-width text area divides by zero below. Terminals report
+                // this while resizing and on detached ptys.
+                (0, 0)
+            } else if state.cursor < w.saturating_sub(p) {
                 (0, state.cursor + p)
             } else {
                 let rem = state.cursor - (w.saturating_sub(p));
@@ -2423,14 +2477,14 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
         ])
     } else if state.voice_transcribing {
         Line::from(vec![
-            Span::styled(" 𒀭 ", Style::default().fg(Color::Rgb(0, 200, 140)).add_modifier(Modifier::BOLD)),
-            Span::styled("Transcribing…", Style::default().fg(Color::Rgb(0, 200, 140))),
+            Span::styled(" 𒀭 ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled("Transcribing…", Style::default().fg(ACCENT)),
             Span::styled("  converting speech to text", Style::default().fg(GREY)),
         ])
     } else if state.is_recording {
         let elapsed = state.session_start.elapsed().as_secs_f64();
         let blink = (elapsed * 2.5).sin() > 0.0;
-        let mic_color = if blink { Color::Rgb(255, 60, 60) } else { Color::Rgb(200, 30, 30) };
+        let mic_color = if blink { MIC_ON } else { MIC_OFF };
         Line::from(vec![
             Span::styled(" 𒀭 ", Style::default().fg(mic_color).add_modifier(Modifier::BOLD)),
             Span::styled("Recording…", Style::default().fg(mic_color)),
@@ -2513,7 +2567,7 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
             Span::styled("esc to interrupt", Style::default().fg(CYAN)),
             Span::styled(
                 "  ·  ctrl+c to quit",
-                Style::default().fg(Color::Rgb(60, 60, 60)),
+                Style::default().fg(STATUS_FG),
             ),
         ])
     } else {
@@ -2527,9 +2581,11 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, state: &TuiState) {
             format!("  ·  {}", state.permission_mode)
         };
         let base = format!(" {}  ·  {}{}", state.model, dir, perm);
-        // Very subtle colors for the sidenote footer
-        let base_style = Style::default().fg(Color::Rgb(50, 50, 50));
-        let tok_style = Style::default().fg(Color::Rgb(40, 40, 40));
+        // Very subtle colors for the sidenote footer — on white "subtle" means
+        // lighter, so the ordering that made these recede on a dark canvas is
+        // inverted rather than dropped.
+        let base_style = Style::default().fg(STATUS_FG);
+        let tok_style = Style::default().fg(DIM);
 
         if state.tokens_in > 0 {
             let tok_str = format!(
@@ -3184,14 +3240,14 @@ impl TuiApp {
                         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
                         match ev {
                             AssistantEvent::TextDelta(delta) => {
-                                // Filter Empty Deltas: Ignore whitespace-only or empty events.
-                                if delta.trim().is_empty() && !delta.contains('\n') {
-                                    // continue to next event
-                                } else {
-                                    // Flow incoming text into the typewriter buffer.
-                                    // It will be drained character-by-character on Tick events.
-                                    state.typewriter_buffer.push_str(&delta);
-                                }
+                                // Every delta is kept, including one that holds nothing but a
+                                // space. Models routinely emit a lone space as its own token;
+                                // dropping it glues the neighbouring words together and leaves
+                                // the wrapper no whitespace to break on, so it hard-breaks mid-word.
+                                //
+                                // Flow incoming text into the typewriter buffer. It will be
+                                // drained character-by-character on Tick events.
+                                state.typewriter_buffer.push_str(&delta);
                             }
                             AssistantEvent::ToolUse { name, input, .. } => {
                                 let preview = tool_input_preview(&input);
@@ -3241,8 +3297,11 @@ impl TuiApp {
                                 state.tokens_out += usage.output_tokens;
                             }
                             AssistantEvent::MessageStop => {
-                                // Clear anchoring so any subsequent text (in a new turn) starts a new block.
-                                state.current_assistant_block_index = None;
+                                // The network is done long before the typewriter is. Releasing the
+                                // anchor here would strand the undrained tail of the reply in a new
+                                // block, so only arm it — the tick drain releases it once the
+                                // buffer runs dry.
+                                state.turn_end_pending = true;
 
                                 // Phase 3: Freezer - stop pulsing for current Plan
                                 if let Some(ExecBlock::Plan { tasks, frozen }) = state.exec_log.back_mut() {
@@ -3442,6 +3501,12 @@ impl TuiApp {
                             }
                         }
 
+                        // The reply is fully typed out, so the turn can now be closed.
+                        if state.turn_end_pending && state.typewriter_buffer.is_empty() {
+                            state.current_assistant_block_index = None;
+                            state.turn_end_pending = false;
+                        }
+
                         // Thinking Typewriter: drain character-by-character for real-time visibility.
                         if !state.thinking_typewriter_buffer.is_empty() {
                             let drain_size = (state.thinking_typewriter_buffer.chars().count() / 10 + 1).min(10);
@@ -3524,7 +3589,7 @@ fn render_hitl_panel(f: &mut ratatui::Frame, area: Rect, name: &str, input: &ser
             for l in old.lines().take(1) {
                 preview.push(Line::from(vec![
                     Span::styled("- ", Style::default().fg(Color::Red)),
-                    Span::styled(l.trim_end().to_string(), Style::default().fg(Color::Rgb(220, 100, 100))),
+                    Span::styled(l.trim_end().to_string(), Style::default().fg(Color::Rgb(180, 35, 30))),
                 ]));
             }
             if old.lines().count() > 1 {
@@ -3535,7 +3600,7 @@ fn render_hitl_panel(f: &mut ratatui::Frame, area: Rect, name: &str, input: &ser
             for l in new.lines().take(1) {
                 preview.push(Line::from(vec![
                     Span::styled("+ ", Style::default().fg(Color::Green)),
-                    Span::styled(l.trim_end().to_string(), Style::default().fg(Color::Rgb(100, 220, 120))),
+                    Span::styled(l.trim_end().to_string(), Style::default().fg(Color::Rgb(0, 120, 60))),
                 ]));
             }
             if new.lines().count() > 1 {
