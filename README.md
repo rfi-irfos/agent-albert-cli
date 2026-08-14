@@ -206,3 +206,7 @@ The workspace uses `resolver = "2"` with `unsafe_code = "forbid"` and pedantic C
 *A sovereign project of [RFI-IRFOS](https://github.com/eriirfos-eng) — building the infrastructure for agentic intelligence.*
 
 </div>
+
+---
+
+*fable was here* — Claude Fable 5
